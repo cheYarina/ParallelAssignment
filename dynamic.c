@@ -1,89 +1,79 @@
 #include <stdio.h>
-#include <time.h>
+#include <stdlib.h>
+#include <mpi.h>
 
-#define WIDTH 640
-#define HEIGHT 480
-#define MAX_ITER 255
+#define IMG_WIDTH 640
+#define IMG_HEIGHT 480
+#define MAX_ITERATIONS 255
 
-struct complex{
-  double real;
-  double imag;
-};
+typedef struct {
+    double real;
+    double imaginary;
+} ComplexNumber;
 
-
-int cal_pixel(struct complex c) {
-    
-
-            double z_real = 0;
-            double z_imag = 0;
-
-            double z_real2, z_imag2, lengthsq;
-
-            int iter = 0;
-            do {
-                z_real2 = z_real * z_real;
-                z_imag2 = z_imag * z_imag;
-
-                z_imag = 2 * z_real * z_imag + c.imag;
-                z_real = z_real2 - z_imag2 + c.real;
-                lengthsq =  z_real2 + z_imag2;
-                iter++;
-            }
-            while ((iter < MAX_ITER) && (lengthsq < 4.0));
-
-            return iter;
-
+int calculatePixel(ComplexNumber c) {
+    int iterations = 0;
+    double zReal = 0.0, zImag = 0.0, zRealSq, zImagSq, magSq;
+    do {
+        zRealSq = zReal * zReal;
+        zImagSq = zImag * zImag;
+        zImag = 2 * zReal * zImag + c.imaginary;
+        zReal = zRealSq - zImagSq + c.real;
+        magSq = zRealSq + zImagSq;
+        iterations++;
+    } while (iterations < MAX_ITERATIONS && magSq < 4.0);
+    return iterations;
 }
 
-void save_pgm(const char *filename, int image[HEIGHT][WIDTH]) {
-    FILE* pgmimg; 
-    int temp;
-    pgmimg = fopen(filename, "wb"); 
-    fprintf(pgmimg, "P2\n"); // Writing Magic Number to the File   
-    fprintf(pgmimg, "%d %d\n", WIDTH, HEIGHT);  // Writing Width and Height
-    fprintf(pgmimg, "255\n");  // Writing the maximum gray value 
-    int count = 0; 
-    
-    for (int i = 0; i < HEIGHT; i++) { 
-        for (int j = 0; j < WIDTH; j++) { 
-            temp = image[i][j]; 
-            fprintf(pgmimg, "%d ", temp); // Writing the gray values in the 2D array to the file 
-        } 
-        fprintf(pgmimg, "\n"); 
-    } 
-    fclose(pgmimg); 
-} 
+void writePGM(const char *filename, int data[IMG_HEIGHT][IMG_WIDTH]) {
+    FILE *file = fopen(filename, "wb");
+    fprintf(file, "P2\n%d %d\n255\n", IMG_WIDTH, IMG_HEIGHT);
+    for (int i = 0; i < IMG_HEIGHT; i++) {
+        for (int j = 0; j < IMG_WIDTH; j++) {
+            fprintf(file, "%d ", data[i][j]);
+        }
+        fprintf(file, "\n");
+    }
+    fclose(file);
+}
 
+int main(int argc, char **argv) {
+    int processRank, numProcesses;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &processRank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numProcesses);
 
-int main() {
-    int image[HEIGHT][WIDTH];
-    double AVG = 0;
-    int N = 10; // number of trials
-    double total_time[N];
-    struct complex c;
+    int image[IMG_HEIGHT][IMG_WIDTH] = {0};
+    int numRows = IMG_HEIGHT / numProcesses;
+    int extraRows = IMG_HEIGHT % numProcesses;
+    int startRow = processRank * numRows + (processRank < extraRows ? processRank : extraRows);
+    int endRow = startRow + numRows + (processRank < extraRows ? 1 : 0);
 
-    for (int k=0; k<N; k++){
-      clock_t start_time = clock(); // Start measuring time
-      int i, j;
-      for (i = 0; i < HEIGHT; i++) {
-          for (j = 0; j < WIDTH; j++) {
-              c.real = (j - WIDTH / 2.0) * 4.0 / WIDTH;
-              c.imag = (i - HEIGHT / 2.0) * 4.0 / HEIGHT;
-              image[i][j] = cal_pixel(c);
-          }
-      }
-
-      clock_t end_time = clock(); // End measuring time
-
-      total_time[k] = ((double)(end_time - start_time)) / CLOCKS_PER_SEC;
-      printf("Execution time of trial [%d]: %f seconds\n", i , total_time[k]);
-      AVG += total_time[k];
+    for (int y = startRow; y < endRow; y++) {
+        for (int x = 0; x < IMG_WIDTH; x++) {
+            ComplexNumber c = {
+                .real = (x - IMG_WIDTH / 2.0) * 4.0 / IMG_WIDTH,
+                .imaginary = (y - IMG_HEIGHT / 2.0) * 4.0 / IMG_HEIGHT
+            };
+            image[y][x] = calculatePixel(c);
+        }
     }
 
-    save_pgm("mandelbrot.pgm", image);
-    printf("The average execution time of 10 trials is: %f ms", AVG/N*1000);
+    if (processRank == 0) {
+        for (int i = 1; i < numProcesses; i++) {
+            int theirStartRow = i * numRows + (i < extraRows ? i : extraRows);
+            int theirEndRow = theirStartRow + numRows + (i < extraRows ? 1 : 0);
+            for (int y = theirStartRow; y < theirEndRow; y++) {
+                MPI_Recv(image[y], IMG_WIDTH, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        }
+        writePGM("dynamicmandelbrot.pgm", image);
+    } else {
+        for (int y = startRow; y < endRow; y++) {
+            MPI_Send(image[y], IMG_WIDTH, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        }
+    }
 
-    
-
+    MPI_Finalize();
     return 0;
 }
