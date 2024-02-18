@@ -43,11 +43,17 @@ int main(int argc, char** argv) {
     MPI_Gather(data, WIDTH * rows_per_process, MPI_INT, final_data, WIDTH * rows_per_process, MPI_INT, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
-        FILE* fp = fopen("mandelbrot.pgm", "wb");
-        fprintf(fp, "P5\n%d %d\n255\n", WIDTH, HEIGHT);
-        for (int i = 0; i < WIDTH * HEIGHT; i++) fputc(final_data[i], fp);
+        FILE* fp = fopen("mandelbrotstatic.pgm", "w"); 
+        fprintf(fp, "P2\n%d %d\n255\n", WIDTH, HEIGHT);
+        for (int i = 0; i < HEIGHT; i++) {
+            for (int j = 0; j < WIDTH; j++) {
+               
+                fprintf(fp, "%d ", final_data[i * WIDTH + j]);
+            }
+            fprintf(fp, "\n");
+        }
         fclose(fp);
-        free(final_data);
+        free(final_data); 
     }
 
     free(data);
