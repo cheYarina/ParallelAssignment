@@ -73,10 +73,10 @@ int main(int argc, char **argv) {
         int partition_end = partition_start + partition_height;
         
         if (world_rank == world_size - 1) {
-            partition_end = HEIGHT; // Ensure the last process gets any remaining rows
+            partition_end = HEIGHT;
         }
 
-        int partition[partition_height][WIDTH]; // Each process computes a partition of the image
+        int partition[partition_height][WIDTH]; 
 
         for (int i = partition_start; i < partition_end; ++i) {
             for (int j = 0; j < WIDTH; ++j) {
@@ -89,11 +89,11 @@ int main(int argc, char **argv) {
         }
 
         double comm_start = MPI_Wtime();
-        // Gather partitions from all processes to the root process
+      
         if (world_rank == 0) {
             int full_image[HEIGHT][WIDTH];
             MPI_Gather(partition, partition_height * WIDTH, MPI_INT, full_image, partition_height * WIDTH, MPI_INT, 0, MPI_COMM_WORLD);
-            save_pgm("refactored_mandelbrot.pgm", full_image);
+            save_pgm("staticmandelbrot.pgm", full_image);
         } else {
             MPI_Gather(partition, partition_height * WIDTH, MPI_INT, NULL, 0, MPI_INT, 0, MPI_COMM_WORLD);
         }
