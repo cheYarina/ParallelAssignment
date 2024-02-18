@@ -1,66 +1,112 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <mpi.h>
-#include <string.h>
+#include <time.h>
 
 #define WIDTH 640
 #define HEIGHT 480
-#define MAX_ITER 1000
+#define MAX_ITER 255
 
-int main(int argc, char** argv) {
-    int rank, size;
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+struct complex{
+  double real;
+  double imag;
+};
 
-    double start_time = MPI_Wtime();
 
-    double real_min = -2.0, real_max = 1.0, imag_min = -1.0, imag_max = 1.0;
-    int rows_per_process = HEIGHT / size, start_row = rows_per_process * rank, end_row = start_row + rows_per_process;
-    if (rank == size - 1) end_row = HEIGHT;
+int cal_pixel(struct complex c) {
+    
 
-    int* data = (int*)malloc(WIDTH * rows_per_process * sizeof(int));
+            double z_real = 0;
+            double z_imag = 0;
 
-    for (int y = start_row; y < end_row; y++) {
-        for (int x = 0; x < WIDTH; x++) {
-            double c_real = real_min + (real_max - real_min) * x / WIDTH;
-            double c_imag = imag_min + (imag_max - imag_min) * y / HEIGHT;
-            double z_real = 0.0, z_imag = 0.0;
+            double z_real2, z_imag2, lengthsq;
+
             int iter = 0;
-            while (z_real * z_real + z_imag * z_imag < 4.0 && iter < MAX_ITER) {
-                double temp = z_real * z_real - z_imag * z_imag + c_real;
-                z_imag = 2.0 * z_real * z_imag + c_imag;
-                z_real = temp;
+            do {
+                z_real2 = z_real * z_real;
+                z_imag2 = z_imag * z_imag;
+
+                z_imag = 2 * z_real * z_imag + c.imag;
+                z_real = z_real2 - z_imag2 + c.real;
+                lengthsq =  z_real2 + z_imag2;
                 iter++;
             }
-            data[(y - start_row) * WIDTH + x] = (iter == MAX_ITER) ? 0 : iter % 256;
+            while ((iter < MAX_ITER) && (lengthsq < 4.0));
+
+            return iter;
+
+}
+
+void save_pgm(const char *filename, int image[HEIGHT][WIDTH]) {
+    FILE* pgmimg; 
+    int temp;
+    pgmimg = fopen(filename, "wb"); 
+    fprintf(pgmimg, "P2\n"); // Writing Magic Number to the File   
+    fprintf(pgmimg, "%d %d\n", WIDTH, HEIGHT);  // Writing Width and Height
+    fprintf(pgmimg, "255\n");  // Writing the maximum gray value 
+    int count = 0; 
+    
+    for (int i = 0; i < HEIGHT; i++) { 
+        for (int j = 0; j < WIDTH; j++) { 
+            temp = image[i][j]; 
+            fprintf(pgmimg, "%d ", temp); // Writing the gray values in the 2D array to the file 
+        } 
+        fprintf(pgmimg, "\n"); 
+    } 
+    fclose(pgmimg); 
+} 
+
+
+int main(int argc, char **argv) {
+    MPI_Init(&argc, &argv);
+    
+    int world_rank, world_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    
+    const int num_trials = 10; 
+    double total_runtime = 0.0, total_communication_time = 0.0;
+
+    for (int trial = 0; trial < num_trials; ++trial) {
+        double trial_start = MPI_Wtime();
+
+        int partition_height = HEIGHT / world_size;
+        int partition_start = partition_height * world_rank;
+        int partition_end = partition_start + partition_height;
+        
+        if (world_rank == world_size - 1) {
+            partition_end = HEIGHT; // Ensure the last process gets any remaining rows
         }
-    }
 
-    int* final_data = NULL;
-    if (rank == 0) final_data = (int*)malloc(WIDTH * HEIGHT * sizeof(int));
+        int partition[partition_height][WIDTH]; // Each process computes a partition of the image
 
-    MPI_Gather(data, WIDTH * rows_per_process, MPI_INT, final_data, WIDTH * rows_per_process, MPI_INT, 0, MPI_COMM_WORLD);
-
-    if (rank == 0) {
-        FILE* fp = fopen("mandelbrotstatic.pgm", "w"); 
-        fprintf(fp, "P2\n%d %d\n255\n", WIDTH, HEIGHT);
-        for (int i = 0; i < HEIGHT; i++) {
-            for (int j = 0; j < WIDTH; j++) {
-               
-                fprintf(fp, "%d ", final_data[i * WIDTH + j]);
+        for (int i = partition_start; i < partition_end; ++i) {
+            for (int j = 0; j < WIDTH; ++j) {
+                struct complex c = {
+                    .real = (j - WIDTH / 2.0) * 4.0 / WIDTH,
+                    .imag = (i - HEIGHT / 2.0) * 4.0 / HEIGHT
+                };
+                partition[i - partition_start][j] = cal_pixel(c) % 256;
             }
-            fprintf(fp, "\n");
         }
-        fclose(fp);
-        free(final_data); 
+
+        double comm_start = MPI_Wtime();
+        // Gather partitions from all processes to the root process
+        if (world_rank == 0) {
+            int full_image[HEIGHT][WIDTH];
+            MPI_Gather(partition, partition_height * WIDTH, MPI_INT, full_image, partition_height * WIDTH, MPI_INT, 0, MPI_COMM_WORLD);
+            save_pgm("refactored_mandelbrot.pgm", full_image);
+        } else {
+            MPI_Gather(partition, partition_height * WIDTH, MPI_INT, NULL, 0, MPI_INT, 0, MPI_COMM_WORLD);
+        }
+        double comm_end = MPI_Wtime();
+
+        double trial_end = MPI_Wtime();
+        total_runtime += trial_end - trial_start;
+        total_communication_time += comm_end - comm_start;
     }
 
-    free(data);
-
-    double end_time = MPI_Wtime();
-    if (rank == 0) {
-        printf("Total execution time: %f seconds\n", end_time - start_time);
+    if (world_rank == 0) {
+        printf("Average execution time over %d trials: %f ms\n", num_trials, (total_runtime / num_trials) * 1000);
+        printf("Average communication time over %d trials: %f ms\n", num_trials, (total_communication_time / num_trials) * 1000);
     }
 
     MPI_Finalize();
