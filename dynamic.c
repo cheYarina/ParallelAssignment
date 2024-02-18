@@ -90,8 +90,8 @@ int main(int argc, char **argv) {
     }
 
     if (rank == 0) {
-        printf("Average Time: %f ms\n", (totalTime / trials) * 1000);
-        printf("Average Communication Time: %f ms\n", (totalCommTime / trials) * 1000);
+        printf("Average Time over 10 trials: %f ms\n", (totalTime / trials) * 1000);
+        printf("Average Communication Time over 10 trials: %f ms\n", (totalCommTime / trials) * 1000);
     }
 
     MPI_Finalize();
